@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg_charcoal">#FF0A0A0A</color>
+    <color name="bg_elevated">#FF141414</color>
+    <color name="bg_surface">#FF1C1C1C</color>
+
+    <color name="text_primary">#FFEDEDED</color>
+    <color name="text_secondary">#FFA0A0A0</color>
+    <color name="text_slate">#FF8A8F98</color>
+
+    <color name="accent_purple">#FF8B5CF6</color>
+    <color name="accent_cyan">#FF06E6FF</color>
+    <color name="accent_pink">#FFFF4D9D</color>
+
+    <color name="key_default">#FF1F1F22</color>
+    <color name="key_active">#FF2A2A2E</color>
+    <color name="key_border_neon">#FF06E6FF</color>
+
+    <color name="gradient_start">#FF8B5CF6</color>
+    <color name="gradient_end">#FF06E6FF</color>
+
+    <color name="white">#FFFFFFFF</color>
+    <color name="black">#FF000000</color>
+</resources>

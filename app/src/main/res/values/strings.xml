@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">StyleKeyboard</string>
+    <string name="keyboard_label">Style Keyboard</string>
+    <string name="accessibility_label">StyleKeyboard Auto Sender</string>
+
+    <!-- Dashboard -->
+    <string name="nav_home">Home</string>
+    <string name="nav_presets">My Presets</string>
+    <string name="nav_emoji_lab">Emoji Lab</string>
+    <string name="nav_smart_typing">Smart Typing</string>
+    <string name="nav_appearance">Appearance</string>
+    <string name="nav_auto_sender">Auto Sender</string>
+    <string name="nav_enable_keyboard">Enable Keyboard</string>
+
+    <!-- Permissions / explanations -->
+    <string name="perm_keyboard_explanation">Allow Style Keyboard in system input settings so it can replace your current keyboard and apply font styles, emoji shortcuts and sounds as you type.</string>
+    <string name="perm_full_access_explanation">Full access is required only if you use an emoji-blend API or imported sound packs. The keyboard does not transmit what you type.</string>
+    <string name="perm_accessibility_explanation">Accessibility is required only when the Auto Sender targets an app that does not support share-intents; it lets the service simulate taps to paste and send your script messages.</string>
+    <string name="perm_storage_explanation">Gallery access is used to pick GIF or short video backgrounds for the keyboard.</string>
+    <string name="perm_notification_explanation">Notifications are required so the Auto Sender can run as a foreground service and you always see when automation is active.</string>
+
+    <!-- Auto Sender -->
+    <string name="auto_sender_channel_name">Auto Sender Status</string>
+    <string name="auto_sender_channel_desc">Visible notification while the Auto Sender is running.</string>
+    <string name="auto_sender_running">Auto Sender is running</string>
+    <string name="auto_sender_paused">Auto Sender paused</string>
+    <string name="auto_sender_stop_all">STOP ALL</string>
+</resources>
