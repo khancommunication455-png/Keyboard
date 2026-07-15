@@ -86,14 +86,14 @@ class AutoSenderService : Service() {
                 else -> Int.MAX_VALUE
             }
             var iteration = 0
-            while (iteration < maxIterations && _state.value != RunState.Stopping) {
+            outer@ while (iteration < maxIterations && _state.value != RunState.Stopping) {
                 iteration++
-                script.messages.forEach { msg ->
+                for (msg in script.messages) {
                     // Pause gate
                     while (_state.value == RunState.Paused) {
                         delay(200)
                     }
-                    if (_state.value == RunState.Stopping) break
+                    if (_state.value == RunState.Stopping) break@outer
 
                     val sent = runCatching { SenderStrategy.send(this@AutoSenderService, script, msg.text) }
                         .getOrElse { false }

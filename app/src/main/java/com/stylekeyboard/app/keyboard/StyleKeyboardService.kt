@@ -57,7 +57,7 @@ class StyleKeyboardService : InputMethodService(), LifecycleOwner, SavedStateReg
         val view = androidx.compose.ui.platform.ComposeView(this).apply {
             setViewTreeLifecycleOwner(this@StyleKeyboardService)
             setViewTreeSavedStateRegistryOwner(this@StyleKeyboardService)
-            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDisposed)
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
         }
         composeView = view
 

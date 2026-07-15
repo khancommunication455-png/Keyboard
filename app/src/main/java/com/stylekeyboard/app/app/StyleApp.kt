@@ -4,7 +4,6 @@ import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
-import androidx.lifecycle.ProcessLifecycleOwner
 import com.stylekeyboard.app.R
 import com.stylekeyboard.app.data.db.StyleDatabase
 import com.stylekeyboard.app.data.repository.AppConfigRepository
@@ -36,7 +35,7 @@ class StyleApp : Application() {
         appScope.launch { seedIfNeeded() }
     }
 
-    private fun seedIfNeeded() {
+    private suspend fun seedIfNeeded() {
         val db = StyleDatabase.get(this)
         val presetRepo = PresetRepository(db.presetDao())
         val shortcutRepo = ShortcutRepository(db.shortcutDao())
@@ -59,9 +58,7 @@ class StyleApp : Application() {
             }
         }
 
-        predictionRepo.runCatching {
-            seedBaseDictionary(BaseDictionary.words())
-        }
+        runCatching { predictionRepo.seedBaseDictionary(BaseDictionary.words()) }
     }
 
     private fun createNotificationChannels() {

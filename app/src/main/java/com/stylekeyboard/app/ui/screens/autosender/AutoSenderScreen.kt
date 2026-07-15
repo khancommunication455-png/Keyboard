@@ -167,9 +167,9 @@ fun AutoSenderScreen(vm: AutoSenderViewModel = viewModel()) {
         // Run controls
         SectionCard("Run") {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                RunButton("Start", Icons.Outlined.PlayArrow, SuccessGreen) { vm.start(context) }
-                RunButton("Pause", Icons.Outlined.Pause, WarnAmber) { vm.pause(context) }
-                RunButton("Stop", Icons.Outlined.Stop, DangerRed) { vm.stop(context) }
+                RunButton("Start", Icons.Outlined.PlayArrow, SuccessGreen, Modifier.weight(1f)) { vm.start(context) }
+                RunButton("Pause", Icons.Outlined.Pause, WarnAmber, Modifier.weight(1f)) { vm.pause(context) }
+                RunButton("Stop", Icons.Outlined.Stop, DangerRed, Modifier.weight(1f)) { vm.stop(context) }
             }
             Spacer(Modifier.height(8.dp))
             Text("A persistent notification will appear while running. The STOP ALL button is always visible there.", color = TextSecondary, fontSize = 11.sp)
@@ -259,10 +259,15 @@ fun AutoSenderScreen(vm: AutoSenderViewModel = viewModel()) {
 }
 
 @Composable
-private fun RunButton(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector, color: androidx.compose.ui.graphics.Color, onClick: () -> Unit) {
+private fun RunButton(
+    text: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    color: androidx.compose.ui.graphics.Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
     Card(
-        modifier = Modifier
-            .weight(1f)
+        modifier = modifier
             .height(56.dp)
             .clickable(onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = Elevated),

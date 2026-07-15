@@ -163,7 +163,7 @@ fun AppearanceScreen(vm: AppearanceViewModel = viewModel()) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("mechanical", "soft_pop", "marimba", "custom").forEach { pack ->
                     KeyShapeOption(
-                        label = pack.replace('_', ' ').replaceFirstChar { it.uppercase() },
+                        label = pack.replace('_', ' ').replaceFirstChar { ch: Char -> ch.uppercaseChar().toString() },
                         icon = Icons.Outlined.MusicNote,
                         selected = cfg.sound.pack == pack,
                         onClick = { vm.setSound(cfg.sound.copy(pack = pack)) }
