@@ -4,10 +4,10 @@ import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
+import android.util.Log
 import com.stylekeyboard.app.R
 import com.stylekeyboard.app.data.db.StyleDatabase
 import com.stylekeyboard.app.data.repository.AppConfigRepository
-import com.stylekeyboard.app.data.repository.AutoSenderLogRepository
 import com.stylekeyboard.app.data.repository.PredictionRepository
 import com.stylekeyboard.app.data.repository.PresetRepository
 import com.stylekeyboard.app.data.repository.ShortcutRepository
@@ -20,9 +20,11 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 /**
- * Application entry point. Owns the single [ServiceLocator] (manual DI) and
- * performs first-launch seeding of default presets, shortcuts, the base
- * dictionary, and the app-config row.
+ * Application entry point.
+ *
+ * Every step in [onCreate] is wrapped in try/catch so a DB or seeding failure
+ * never crashes the host app — the user can still open the app and navigate
+ * to the Enable Keyboard screen even if seeding failed.
  */
 class StyleApp : Application() {
 
@@ -30,9 +32,20 @@ class StyleApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        ServiceLocator.init(this)
-        createNotificationChannels()
-        appScope.launch { seedIfNeeded() }
+        Log.i(TAG, "onCreate")
+        try {
+            ServiceLocator.init(this)
+        } catch (t: Throwable) {
+            Log.e(TAG, "ServiceLocator.init failed", t)
+        }
+        try { createNotificationChannels() } catch (t: Throwable) {
+            Log.e(TAG, "createNotificationChannels failed", t)
+        }
+        appScope.launch {
+            try { seedIfNeeded() } catch (t: Throwable) {
+                Log.e(TAG, "seedIfNeeded failed", t)
+            }
+        }
     }
 
     private suspend fun seedIfNeeded() {
@@ -48,13 +61,13 @@ class StyleApp : Application() {
 
         if (presetRepo.count() == 0) {
             DefaultPresets.all().forEach { seed ->
-                presetRepo.insert(seed.name, seed.mapping, seed.description)
+                runCatching { presetRepo.insert(seed.name, seed.mapping, seed.description) }
             }
         }
 
         if (shortcutRepo.getAll().isEmpty()) {
             DefaultShortcuts.all().forEach { shortcut ->
-                db.shortcutDao().insert(shortcut)
+                runCatching { db.shortcutDao().insert(shortcut) }
             }
         }
 
@@ -74,5 +87,9 @@ class StyleApp : Application() {
             }
             mgr.createNotificationChannel(channel)
         }
+    }
+
+    companion object {
+        private const val TAG = "StyleApp"
     }
 }

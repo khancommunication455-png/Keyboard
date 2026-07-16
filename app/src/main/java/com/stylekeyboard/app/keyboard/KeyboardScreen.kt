@@ -99,6 +99,7 @@ fun KeyboardScreen(
     Box(
         modifier = modifier
             .fillMaxWidth()
+            .height(260.dp)
             .background(theme.background)
     ) {
         // Layer 1: GIF background
@@ -409,6 +410,8 @@ private fun KeyCap(
                         onPressStart()
                         tryAwaitRelease()
                         onPressEnd()
+                    },
+                    onTap = {
                         if (!longPressFired) onTap()
                     },
                     onLongPress = {

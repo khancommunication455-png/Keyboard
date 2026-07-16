@@ -2,12 +2,18 @@ package com.stylekeyboard.app.keyboard
 
 import android.inputmethodservice.InputMethodService
 import android.util.Log
+import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -20,19 +26,15 @@ import com.stylekeyboard.app.app.ServiceLocator
 import com.stylekeyboard.app.ui.theme.StyleKeyboardTheme
 
 /**
- * The system-wide custom keyboard IME. Renders a Compose-based [KeyboardScreen]
- * inside an Android View hierarchy attached to the input method window.
+ * The system-wide custom keyboard IME.
  *
- * The IME lifecycle MUST be wired up correctly for ComposeView to attach.
- * Sequence Android calls:
- *   onCreate()                          → dispatch ON_CREATE
- *   onCreateInputView()                 → build ComposeView, set view-tree owners
- *   onWindowShown()                     → dispatch ON_START, ON_RESUME
- *   onWindowHidden()                    → dispatch ON_PAUSE, ON_STOP
- *   onDestroy()                         → dispatch ON_DESTROY
+ * Defensive coding: every override is wrapped in try/catch so a failure in any
+ * step never crashes the IME process (which would make the system fall back to
+ * the previous keyboard and confuse the user).
  *
- * The view tree owners MUST be set BEFORE [ComposeView.setContent] is called,
- * otherwise Compose throws "ViewTreeLifecycleOwner not found from View".
+ * If the Compose view fails to create, we fall back to a simple native
+ * LinearLayout with a few buttons so the user at least sees *something* and
+ * can switch back to their previous keyboard via the globe icon.
  */
 class StyleKeyboardService : InputMethodService(), LifecycleOwner, SavedStateRegistryOwner {
 
@@ -48,24 +50,26 @@ class StyleKeyboardService : InputMethodService(), LifecycleOwner, SavedStateReg
 
     override fun onCreate() {
         super.onCreate()
+        Log.i(TAG, "onCreate")
         try {
             savedStateRegistryController.performRestore(null)
             lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
             ServiceLocator.init(this)
         } catch (t: Throwable) {
-            Log.e("StyleKeyboardService", "onCreate failed", t)
+            Log.e(TAG, "onCreate failed", t)
         }
     }
 
     override fun onCreateInputView(): View {
+        Log.i(TAG, "onCreateInputView")
         return try {
-            // Build a ComposeView. We MUST set the view tree owners BEFORE
-            // setContent so the first composition can find them.
+            // Ensure ServiceLocator is initialized even if onCreate threw
+            runCatching { ServiceLocator.init(this) }
+
             val view = androidx.compose.ui.platform.ComposeView(this).apply {
                 setViewTreeLifecycleOwner(this@StyleKeyboardService)
                 setViewTreeSavedStateRegistryOwner(this@StyleKeyboardService)
                 setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
-                // Important: layout params so the IME measures the view
                 layoutParams = ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
@@ -82,44 +86,127 @@ class StyleKeyboardService : InputMethodService(), LifecycleOwner, SavedStateReg
                         onGlobe = { switchToNextKeyboardOrSystem() },
                         onSettings = { launchSettings() },
                         onSwitchPreset = { showPresetSwitcher() },
-                        onOpenEmojiPanel = { /* future: open emoji panel */ },
+                        onOpenEmojiPanel = { /* future */ },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
             }
-            // Refresh config + presets in the background so the first paint isn't
-            // blocked on a DB read.
             runCatching { controller.refresh(this) }
             viewCreated = true
+            Log.i(TAG, "onCreateInputView: Compose view created successfully")
             view
         } catch (t: Throwable) {
-            Log.e("StyleKeyboardService", "onCreateInputView failed", t)
-            // Fallback: empty view so we don't crash the system
-            View(this)
+            Log.e(TAG, "onCreateInputView FAILED — falling back to native view", t)
+            createFallbackView()
+        }
+    }
+
+    /**
+     * Minimal native fallback so the keyboard always shows SOMETHING. If the
+     * Compose path fails, the user still sees a row of letters and can type
+     * and switch back to their old keyboard.
+     */
+    private fun createFallbackView(): View {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            setPadding(8, 8, 8, 8)
+            setBackgroundColor(0xFF0A0A0A.toInt())
+        }
+
+        val label = TextView(this).apply {
+            text = "Style Keyboard (fallback mode — restart app to fix)"
+            setTextColor(0xFFEDEDED.toInt())
+            textSize = 12f
+            setPadding(16, 8, 16, 8)
+        }
+        container.addView(label)
+
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        "qwertyuiop".forEach { ch ->
+            row.addView(makeFallbackKey(ch.toString()))
+        }
+        container.addView(row)
+
+        val row2 = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        "asdfghjkl".forEach { ch ->
+            row2.addView(makeFallbackKey(ch.toString()))
+        }
+        container.addView(row2)
+
+        val controls = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        val space = Button(this).apply {
+            text = "space"
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 2f)
+            setOnClickListener { currentInputConnection?.commitText(" ", 1) }
+        }
+        val enter = Button(this).apply {
+            text = "⏎"
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener { currentInputConnection?.commitText("\n", 1) }
+        }
+        val del = Button(this).apply {
+            text = "⌫"
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener { currentInputConnection?.deleteSurroundingText(1, 0) }
+        }
+        val globe = Button(this).apply {
+            text = "🌐"
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener { switchToNextKeyboardOrSystem() }
+        }
+        controls.addView(globe)
+        controls.addView(space)
+        controls.addView(del)
+        controls.addView(enter)
+        container.addView(controls)
+
+        viewCreated = true
+        return container
+    }
+
+    private fun makeFallbackKey(label: String): Button {
+        return Button(this).apply {
+            text = label
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener {
+                currentInputConnection?.commitText(label, 1)
+            }
         }
     }
 
     override fun onWindowShown() {
         super.onWindowShown()
+        Log.i(TAG, "onWindowShown")
         try {
             if (viewCreated) {
                 lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
                 lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
             }
         } catch (t: Throwable) {
-            Log.w("StyleKeyboardService", "onWindowShown failed", t)
+            Log.w(TAG, "onWindowShown failed", t)
         }
     }
 
     override fun onWindowHidden() {
         super.onWindowHidden()
+        Log.i(TAG, "onWindowHidden")
         try {
             if (viewCreated) {
                 lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
                 lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
             }
         } catch (t: Throwable) {
-            Log.w("StyleKeyboardService", "onWindowHidden failed", t)
+            Log.w(TAG, "onWindowHidden failed", t)
         }
     }
 
@@ -129,13 +216,14 @@ class StyleKeyboardService : InputMethodService(), LifecycleOwner, SavedStateReg
     }
 
     override fun onDestroy() {
+        Log.i(TAG, "onDestroy")
         runCatching { controller.release() }
         try {
             if (viewCreated) {
                 lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
             }
         } catch (t: Throwable) {
-            Log.w("StyleKeyboardService", "onDestroy failed", t)
+            Log.w(TAG, "onDestroy failed", t)
         }
         super.onDestroy()
     }
@@ -152,7 +240,7 @@ class StyleKeyboardService : InputMethodService(), LifecycleOwner, SavedStateReg
                 Key.ActionType.Delete -> controller.handleDelete(ic)
                 Key.ActionType.Enter -> controller.handleEnter(ic)
                 Key.ActionType.Shift -> controller.toggleShift()
-                Key.ActionType.Symbol -> { /* handled in KeyboardScreen for layout switch */ }
+                Key.ActionType.Symbol -> { /* handled in KeyboardScreen */ }
                 Key.ActionType.SwitchKeyboard -> switchToNextKeyboardOrSystem()
                 Key.ActionType.SwitchPreset -> showPresetSwitcher()
                 Key.ActionType.Settings -> launchSettings()
@@ -172,7 +260,7 @@ class StyleKeyboardService : InputMethodService(), LifecycleOwner, SavedStateReg
                 Toast.makeText(this, "No other keyboard installed.", Toast.LENGTH_SHORT).show()
             }
         } catch (t: Throwable) {
-            Log.w("StyleKeyboardService", "switchToNextInputMethod failed", t)
+            Log.w(TAG, "switchToNextInputMethod failed", t)
         }
     }
 
@@ -183,12 +271,15 @@ class StyleKeyboardService : InputMethodService(), LifecycleOwner, SavedStateReg
             }
             startActivity(intent)
         } catch (t: Throwable) {
-            Log.w("StyleKeyboardService", "Failed to launch settings", t)
+            Log.w(TAG, "Failed to launch settings", t)
         }
     }
 
     private fun showPresetSwitcher() {
-        // For brevity, just open the host app's Presets screen.
         launchSettings()
+    }
+
+    companion object {
+        private const val TAG = "StyleKeyboardService"
     }
 }
