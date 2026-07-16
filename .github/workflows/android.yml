@@ -23,13 +23,18 @@ jobs:
           cache: gradle
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v3
+        uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
 
+      # The repo ships gradlew + gradle-wrapper.properties but NOT the binary
+      # gradle-wrapper.jar (it can't be checked into text form). We bootstrap
+      # it here using the system-installed gradle, so ./gradlew works below.
+      - name: Generate Gradle wrapper jar
+        run: gradle wrapper --gradle-version 8.7 --distribution-type bin
+
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
-        working-directory: ${{ github.workspace }}
 
       - name: Build debug APK
         run: ./gradlew assembleDebug --no-daemon --stacktrace
@@ -44,3 +49,4 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
+          
