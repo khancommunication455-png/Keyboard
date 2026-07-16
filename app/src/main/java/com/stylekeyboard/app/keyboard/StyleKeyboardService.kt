@@ -66,6 +66,18 @@ class StyleKeyboardService : InputMethodService(), LifecycleOwner, SavedStateReg
             // Ensure ServiceLocator is initialized even if onCreate threw
             runCatching { ServiceLocator.init(this) }
 
+            // CRITICAL: Compose looks for ViewTreeLifecycleOwner/SavedStateRegistryOwner
+            // on the *window's root decor view* (the "parentPanel" InputMethodService
+            // creates internally), not on the ComposeView we return below. Without this,
+            // ComposeView.onAttachedToWindow throws IllegalStateException
+            // ("ViewTreeLifecycleOwner not found from ...parentPanel") the first time the
+            // keyboard is shown — and since that happens during onAttachedToWindow, it's
+            // NOT caught by this try/catch, crashing the process outright.
+            window?.window?.decorView?.let { decor ->
+                decor.setViewTreeLifecycleOwner(this@StyleKeyboardService)
+                decor.setViewTreeSavedStateRegistryOwner(this@StyleKeyboardService)
+            }
+
             val view = androidx.compose.ui.platform.ComposeView(this).apply {
                 setViewTreeLifecycleOwner(this@StyleKeyboardService)
                 setViewTreeSavedStateRegistryOwner(this@StyleKeyboardService)
@@ -188,6 +200,12 @@ class StyleKeyboardService : InputMethodService(), LifecycleOwner, SavedStateReg
         super.onWindowShown()
         Log.i(TAG, "onWindowShown")
         try {
+            // Safety net: reapply in case the decor view wasn't ready yet when
+            // onCreateInputView first ran (happens on some OEM ROMs).
+            window?.window?.decorView?.let { decor ->
+                decor.setViewTreeLifecycleOwner(this@StyleKeyboardService)
+                decor.setViewTreeSavedStateRegistryOwner(this@StyleKeyboardService)
+            }
             if (viewCreated) {
                 lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
                 lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
