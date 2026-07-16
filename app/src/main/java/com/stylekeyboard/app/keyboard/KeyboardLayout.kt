@@ -146,7 +146,7 @@ object KeyboardLayout {
 
     fun letterRows(shifted: Boolean): List<List<Key>> {
         if (!shifted) {
-            return listOf(numberRow, letterRow1, letterRow2, letterRow3, letterRow4)
+            return listOf(letterRow1, letterRow2, letterRow3, letterRow4)
         }
         fun shiftRow(row: List<Key>): List<Key> = row.map { k ->
             when (k) {
@@ -155,7 +155,6 @@ object KeyboardLayout {
             }
         }
         return listOf(
-            shiftRow(numberRow),
             shiftRow(letterRow1),
             shiftRow(letterRow2),
             letterRow3, // shift key already on

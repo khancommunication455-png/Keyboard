@@ -26,6 +26,13 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Translate
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -37,6 +44,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -147,11 +155,20 @@ fun KeyboardScreen(
 
             // Rows
             rows.forEach { row ->
+                // Rows made entirely of letters (like the "asdf..." row) get symmetric
+                // side insets when they have fewer than 10 keys, so their columns line
+                // up under row 1 instead of stretching wider — matching Gboard's look.
+                // Rows with action keys (shift/delete/space/etc.) already get their
+                // inset "for free" via those keys' extra weight, so we leave them alone.
+                val isAllLetters = row.all { it is Key.Letter }
+                val sideInset = if (isAllLetters && row.size < 10) (10 - row.size) / 2f else 0f
+
                 KeyRow(
                     keys = row,
                     theme = theme,
                     keyShape = config.keyShape,
                     shiftOn = shiftOn,
+                    sideInsetWeight = sideInset,
                     onKeyTap = { key ->
                         // Handle symbol/ABC toggle here so the layout switches instantly
                         when (key) {
@@ -233,46 +250,49 @@ private fun Toolbar(
     onSettings: () -> Unit,
     onGlobe: () -> Unit
 ) {
+    // Gboard-style row: plain (no background) icons, evenly spaced, no preset pill.
+    // Left-to-right mirrors Gboard's layout: grid / GIF / settings / language-switch / theme / mic.
     Row(
         Modifier.fillMaxWidth().height(34.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Left: preset pill
-        Box(
-            Modifier
-                .clip(RoundedCornerShape(10.dp))
-                .background(theme.accent)
-                .clickable(onClick = onSwitchPreset)
-                .padding(horizontal = 12.dp, vertical = 4.dp)
-        ) {
-            Text(presetName, color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 11.sp)
-        }
-
-        // Right: icon row
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            ToolbarIcon("🎨", onClick = onOpenThemePicker, theme = theme)
-            Spacer(Modifier.width(4.dp))
-            ToolbarIcon("😀", onClick = onOpenEmoji, theme = theme)
-            Spacer(Modifier.width(4.dp))
-            ToolbarIcon("🌐", onClick = onGlobe, theme = theme)
-            Spacer(Modifier.width(4.dp))
-            ToolbarIcon("⚙", onClick = onSettings, theme = theme)
-        }
+        ToolbarIconVector(Icons.Outlined.GridView, theme, onClick = onSwitchPreset)
+        ToolbarIconText("GIF", theme, onClick = onOpenEmoji)
+        ToolbarIconVector(Icons.Outlined.Settings, theme, onClick = onSettings)
+        ToolbarIconVector(Icons.Outlined.Translate, theme, onClick = onGlobe)
+        ToolbarIconVector(Icons.Outlined.Palette, theme, onClick = onOpenThemePicker)
+        ToolbarIconVector(Icons.Outlined.Mic, theme, onClick = { /* voice input: future */ })
     }
 }
 
 @Composable
-private fun ToolbarIcon(glyph: String, onClick: () -> Unit, theme: KeyboardTheme) {
+private fun ToolbarIconVector(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    theme: KeyboardTheme,
+    onClick: () -> Unit
+) {
     Box(
         Modifier
             .size(30.dp)
             .clip(CircleShape)
-            .background(theme.keyBg)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        Text(glyph, color = theme.keyFg, fontSize = 14.sp)
+        Icon(icon, contentDescription = null, tint = theme.keyFg, modifier = Modifier.size(20.dp))
+    }
+}
+
+@Composable
+private fun ToolbarIconText(label: String, theme: KeyboardTheme, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .size(30.dp)
+            .clip(CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(label, color = theme.keyFg, fontSize = 11.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -329,6 +349,7 @@ private fun KeyRow(
     theme: KeyboardTheme,
     keyShape: String,
     shiftOn: Boolean,
+    sideInsetWeight: Float = 0f,
     onKeyTap: (Key) -> Unit,
     onKeyPressStart: (Key) -> Unit,
     onKeyPressEnd: () -> Unit,
@@ -338,6 +359,7 @@ private fun KeyRow(
         Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
+        if (sideInsetWeight > 0f) Spacer(Modifier.weight(sideInsetWeight))
         keys.forEach { key ->
             KeyCap(
                 key = key,
@@ -361,6 +383,7 @@ private fun KeyRow(
                 onLongPress = { onLongPress(key) }
             )
         }
+        if (sideInsetWeight > 0f) Spacer(Modifier.weight(sideInsetWeight))
     }
 }
 
@@ -390,9 +413,27 @@ private fun KeyCap(
     // Long-press detection
     var longPressFired by remember { mutableStateOf(false) }
 
+    // Snappy press feedback: quick scale-down + background darken while held,
+    // springing back the instant the finger lifts. Short durations (60-80ms)
+    // keep it feeling instant rather than laggy.
+    var isPressed by remember { mutableStateOf(false) }
+    val pressScale by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (isPressed) 0.92f else 1f,
+        animationSpec = androidx.compose.animation.core.tween(durationMillis = 70),
+        label = "keyPressScale"
+    )
+    val baseBg = if (isAction) theme.keyBgActive else theme.keyBg
+    val pressedBg = androidx.compose.ui.graphics.lerp(baseBg, Color.Black, 0.12f)
+    val animatedBg by androidx.compose.animation.animateColorAsState(
+        targetValue = if (isPressed) pressedBg else baseBg,
+        animationSpec = androidx.compose.animation.core.tween(durationMillis = 70),
+        label = "keyPressBg"
+    )
+
     Box(
         modifier = modifier
             .height(44.dp)
+            .graphicsLayer(scaleX = pressScale, scaleY = pressScale)
             .clip(baseShape)
             .then(
                 if (theme.keyBorder != null) {
@@ -400,15 +441,17 @@ private fun KeyCap(
                         .background(Color.Transparent)
                         .border(1.dp, theme.keyBorder, baseShape)
                 } else {
-                    Modifier.background(if (isAction) theme.keyBgActive else theme.keyBg)
+                    Modifier.background(animatedBg)
                 }
             )
             .pointerInput(key) {
                 detectTapGestures(
                     onPress = {
                         longPressFired = false
+                        isPressed = true
                         onPressStart()
                         tryAwaitRelease()
+                        isPressed = false
                         onPressEnd()
                     },
                     onTap = {
@@ -440,6 +483,20 @@ private fun KeyCap(
             else -> 17.sp
         }
         Text(label, color = textColor, fontSize = fontSize, fontWeight = if (isAction) FontWeight.SemiBold else FontWeight.Normal)
+
+        // Gboard-style corner number hint: only letter keys whose first
+        // long-press alternate is a bare digit (i.e. row 1) show one.
+        val cornerNumber = (key as? Key.Letter)?.alternates?.firstOrNull()
+        if (cornerNumber != null && cornerNumber.length == 1 && cornerNumber[0].isDigit()) {
+            Text(
+                cornerNumber,
+                color = textColor.copy(alpha = 0.55f),
+                fontSize = 9.sp,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 2.dp, end = 3.dp)
+            )
+        }
     }
 }
 
