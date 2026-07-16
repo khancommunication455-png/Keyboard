@@ -22,4 +22,5 @@ class AppearanceViewModel : ViewModel() {
     fun setKeyShape(shape: String) = viewModelScope.launch { repo.setKeyShape(shape) }
     fun setSound(cfg: SoundConfig) = viewModelScope.launch { repo.setSound(cfg) }
     fun setHaptics(enabled: Boolean) = viewModelScope.launch { repo.setHaptics(enabled) }
+    fun setThemeId(themeId: String) = viewModelScope.launch { repo.setThemeId(themeId) }
 }

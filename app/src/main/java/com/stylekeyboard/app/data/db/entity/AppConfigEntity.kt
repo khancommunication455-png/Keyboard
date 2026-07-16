@@ -28,5 +28,6 @@ data class AppConfigEntity(
     val hapticsEnabled: Boolean = true,
     val activePresetId: Long = 1L,
     val emojiShortcutsEnabled: Boolean = true,
-    val predictiveTextEnabled: Boolean = true
+    val predictiveTextEnabled: Boolean = true,
+    val themeId: String = "charcoal"
 )

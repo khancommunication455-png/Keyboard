@@ -79,7 +79,8 @@ class KeyboardController {
                     hapticsEnabled = config.hapticsEnabled,
                     activePresetId = config.activePresetId,
                     emojiShortcutsEnabled = config.emojiShortcutsEnabled,
-                    predictiveTextEnabled = config.predictiveTextEnabled
+                    predictiveTextEnabled = config.predictiveTextEnabled,
+                    themeId = config.themeId
                 )
                 _config.value = resolved
                 soundManager?.applyConfig(resolved.sound)
@@ -209,6 +210,18 @@ class KeyboardController {
         ServiceLocator.predictionRepository.recordConfirmedWord(confirmed, previous)
         // After a word boundary, refresh suggestions to show "next word" predictions
         updateSuggestionsForCurrentWord(ic)
+    }
+
+    fun setThemeId(themeId: String) {
+        // Optimistic local update so the keyboard re-themes immediately.
+        _config.value = _config.value.copy(themeId = themeId)
+        scope.launch {
+            try {
+                ServiceLocator.appConfigRepository.setThemeId(themeId)
+            } catch (t: Throwable) {
+                android.util.Log.w("KeyboardController", "setThemeId failed", t)
+            }
+        }
     }
 
     fun release() {

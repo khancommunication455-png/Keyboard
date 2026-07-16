@@ -22,7 +22,8 @@ class AppConfigRepository(private val dao: AppConfigDao) {
                 hapticsEnabled = it.hapticsEnabled,
                 activePresetId = it.activePresetId,
                 emojiShortcutsEnabled = it.emojiShortcutsEnabled,
-                predictiveTextEnabled = it.predictiveTextEnabled
+                predictiveTextEnabled = it.predictiveTextEnabled,
+                themeId = it.themeId
             )
         } ?: ResolvedConfig()
     }
@@ -41,7 +42,8 @@ class AppConfigRepository(private val dao: AppConfigDao) {
                     hapticsEnabled = true,
                     activePresetId = 1L,
                     emojiShortcutsEnabled = true,
-                    predictiveTextEnabled = true
+                    predictiveTextEnabled = true,
+                    themeId = "charcoal"
                 )
             )
         }
@@ -86,6 +88,11 @@ class AppConfigRepository(private val dao: AppConfigDao) {
         val current = dao.get() ?: return
         dao.update(current.copy(predictiveTextEnabled = enabled))
     }
+
+    suspend fun setThemeId(themeId: String) {
+        val current = dao.get() ?: return
+        dao.update(current.copy(themeId = themeId))
+    }
 }
 
 data class ResolvedConfig(
@@ -96,5 +103,6 @@ data class ResolvedConfig(
     val hapticsEnabled: Boolean = true,
     val activePresetId: Long = 1L,
     val emojiShortcutsEnabled: Boolean = true,
-    val predictiveTextEnabled: Boolean = true
+    val predictiveTextEnabled: Boolean = true,
+    val themeId: String = "charcoal"
 )

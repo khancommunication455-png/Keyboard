@@ -3,6 +3,7 @@ package com.stylekeyboard.app.keyboard
 import android.inputmethodservice.InputMethodService
 import android.util.Log
 import android.view.View
+import android.view.ViewGroup
 import android.widget.Toast
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.ui.Modifier
@@ -22,93 +23,125 @@ import com.stylekeyboard.app.ui.theme.StyleKeyboardTheme
  * The system-wide custom keyboard IME. Renders a Compose-based [KeyboardScreen]
  * inside an Android View hierarchy attached to the input method window.
  *
- * Lifecycle wiring notes (this is the part most Compose-IME tutorials get wrong):
- *   - An `InputMethodService` is a Service, not an Activity. Compose's
- *     [androidx.compose.ui.platform.ComposeView] needs a `LifecycleOwner`
- *     that goes through CREATED → STARTED → RESUMED → PAUSED → STOPPED → DESTROYED,
- *     otherwise `remember`/`collectAsState` won't recompose.
- *   - We dispatch ON_CREATE in [onCreate], ON_START+ON_RESUME in [onWindowShown],
- *     ON_PAUSE+ON_STOP in [onWindowHidden], and ON_DESTROY in [onDestroy].
- *   - We also implement [SavedStateRegistryOwner] because ComposeView requires
- *     one in the view tree.
+ * The IME lifecycle MUST be wired up correctly for ComposeView to attach.
+ * Sequence Android calls:
+ *   onCreate()                          → dispatch ON_CREATE
+ *   onCreateInputView()                 → build ComposeView, set view-tree owners
+ *   onWindowShown()                     → dispatch ON_START, ON_RESUME
+ *   onWindowHidden()                    → dispatch ON_PAUSE, ON_STOP
+ *   onDestroy()                         → dispatch ON_DESTROY
+ *
+ * The view tree owners MUST be set BEFORE [ComposeView.setContent] is called,
+ * otherwise Compose throws "ViewTreeLifecycleOwner not found from View".
  */
 class StyleKeyboardService : InputMethodService(), LifecycleOwner, SavedStateRegistryOwner {
 
-    private val lifecycleRegistry = LifecycleRegistry(this)
-    private val savedStateRegistryController = SavedStateRegistryController.create(this)
+    private val lifecycleRegistry by lazy { LifecycleRegistry(this) }
+    private val savedStateRegistryController by lazy { SavedStateRegistryController.create(this) }
 
     override val lifecycle: Lifecycle get() = lifecycleRegistry
     override val savedStateRegistry: SavedStateRegistry
         get() = savedStateRegistryController.savedStateRegistry
 
     private val controller = KeyboardController()
+    @Volatile private var viewCreated = false
 
     override fun onCreate() {
         super.onCreate()
-        savedStateRegistryController.performRestore(null)
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
-        ServiceLocator.init(this)
+        try {
+            savedStateRegistryController.performRestore(null)
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
+            ServiceLocator.init(this)
+        } catch (t: Throwable) {
+            Log.e("StyleKeyboardService", "onCreate failed", t)
+        }
     }
 
     override fun onCreateInputView(): View {
-        // Build a ComposeView attached to the IME's lifecycle. The view tree
-        // owners MUST be set BEFORE setContent, otherwise the first composition
-        // will throw "ViewTreeLifecycleOwner not found".
-        val view = androidx.compose.ui.platform.ComposeView(this).apply {
-            setViewTreeLifecycleOwner(this@StyleKeyboardService)
-            setViewTreeSavedStateRegistryOwner(this@StyleKeyboardService)
-            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
-        }
-
-        view.setContent {
-            StyleKeyboardTheme {
-                KeyboardScreen(
-                    controller = controller,
-                    onKey = { key -> handleKey(key) },
-                    onSuggestionTap = { word -> controller.insertSuggestion(word, currentInputConnection) },
-                    onEmojiShortcutTap = { sc -> controller.insertEmoji(sc, currentInputConnection) },
-                    onGlobe = { switchToNextKeyboardOrSystem() },
-                    onSettings = { launchSettings() },
-                    onSwitchPreset = { showPresetSwitcher() },
-                    modifier = Modifier.fillMaxWidth()
+        return try {
+            // Build a ComposeView. We MUST set the view tree owners BEFORE
+            // setContent so the first composition can find them.
+            val view = androidx.compose.ui.platform.ComposeView(this).apply {
+                setViewTreeLifecycleOwner(this@StyleKeyboardService)
+                setViewTreeSavedStateRegistryOwner(this@StyleKeyboardService)
+                setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+                // Important: layout params so the IME measures the view
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
                 )
             }
+
+            view.setContent {
+                StyleKeyboardTheme {
+                    KeyboardScreen(
+                        controller = controller,
+                        onKey = { key -> handleKey(key) },
+                        onSuggestionTap = { word -> controller.insertSuggestion(word, currentInputConnection) },
+                        onEmojiShortcutTap = { sc -> controller.insertEmoji(sc, currentInputConnection) },
+                        onGlobe = { switchToNextKeyboardOrSystem() },
+                        onSettings = { launchSettings() },
+                        onSwitchPreset = { showPresetSwitcher() },
+                        onOpenEmojiPanel = { /* future: open emoji panel */ },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+            // Refresh config + presets in the background so the first paint isn't
+            // blocked on a DB read.
+            runCatching { controller.refresh(this) }
+            viewCreated = true
+            view
+        } catch (t: Throwable) {
+            Log.e("StyleKeyboardService", "onCreateInputView failed", t)
+            // Fallback: empty view so we don't crash the system
+            View(this)
         }
-        // Refresh config + presets in the background so the first paint isn't
-        // blocked on a DB read.
-        controller.refresh(this)
-        return view
     }
 
     override fun onWindowShown() {
         super.onWindowShown()
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        try {
+            if (viewCreated) {
+                lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
+                lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+            }
+        } catch (t: Throwable) {
+            Log.w("StyleKeyboardService", "onWindowShown failed", t)
+        }
     }
 
     override fun onWindowHidden() {
         super.onWindowHidden()
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+        try {
+            if (viewCreated) {
+                lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
+                lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+            }
+        } catch (t: Throwable) {
+            Log.w("StyleKeyboardService", "onWindowHidden failed", t)
+        }
     }
 
     override fun onStartInput(attribute: android.view.inputmethod.EditorInfo?, restarting: Boolean) {
         super.onStartInput(attribute, restarting)
-        // Refresh on each new input field so a config change in the host app
-        // (e.g. the user picked a new active preset) is picked up.
         runCatching { controller.refresh(this) }
     }
 
     override fun onDestroy() {
         runCatching { controller.release() }
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
+        try {
+            if (viewCreated) {
+                lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
+            }
+        } catch (t: Throwable) {
+            Log.w("StyleKeyboardService", "onDestroy failed", t)
+        }
         super.onDestroy()
     }
 
     private fun handleKey(key: Key) {
         val ic = currentInputConnection
-        // Play sound + haptics first so the click aligns with the tap. Wrap in
-        // runCatching so a bad SoundPool state can never crash the input path.
         val config = controller.config.value
         runCatching { controller.soundManager?.playClick(config.sound, config.hapticsEnabled) }
 
@@ -119,24 +152,24 @@ class StyleKeyboardService : InputMethodService(), LifecycleOwner, SavedStateReg
                 Key.ActionType.Delete -> controller.handleDelete(ic)
                 Key.ActionType.Enter -> controller.handleEnter(ic)
                 Key.ActionType.Shift -> controller.toggleShift()
-                Key.ActionType.Symbol -> { /* extension point: switch to symbol layout */ }
+                Key.ActionType.Symbol -> { /* handled in KeyboardScreen for layout switch */ }
                 Key.ActionType.SwitchKeyboard -> switchToNextKeyboardOrSystem()
                 Key.ActionType.SwitchPreset -> showPresetSwitcher()
                 Key.ActionType.Settings -> launchSettings()
                 Key.ActionType.Suggestion -> { /* handled via onSuggestionTap */ }
+                Key.ActionType.Emoji -> { /* future */ }
+                Key.ActionType.Mic -> { /* future */ }
+                Key.ActionType.Search -> { /* future */ }
+                Key.ActionType.Clipboard -> { /* future */ }
             }
         }
     }
 
     private fun switchToNextKeyboardOrSystem() {
-        // Use the IME's own API rather than InputMethodManager.showInputMethodPicker,
-        // which throws when called from a non-Activity (Service) context.
         try {
             val switched = switchToNextInputMethod(false)
             if (!switched) {
-                // No next input method — fall back to the system IME picker via
-                // the Settings intent, launched from our own activity task.
-                Toast.makeText(this, "No other keyboard to switch to.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "No other keyboard installed.", Toast.LENGTH_SHORT).show()
             }
         } catch (t: Throwable) {
             Log.w("StyleKeyboardService", "switchToNextInputMethod failed", t)
@@ -155,8 +188,7 @@ class StyleKeyboardService : InputMethodService(), LifecycleOwner, SavedStateReg
     }
 
     private fun showPresetSwitcher() {
-        // For brevity, just open the host app's Presets screen. A production
-        // version would show a popup dialog with a horizontal list of presets.
+        // For brevity, just open the host app's Presets screen.
         launchSettings()
     }
 }

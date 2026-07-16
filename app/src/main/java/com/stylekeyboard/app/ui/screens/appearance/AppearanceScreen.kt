@@ -37,6 +37,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -76,6 +77,44 @@ fun AppearanceScreen(vm: AppearanceViewModel = viewModel()) {
     ) {
         Text("Appearance", color = TextPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
         Text("GIF backgrounds, glint animation, key shapes, sounds.", color = TextSecondary, fontSize = 13.sp)
+        Spacer(Modifier.height(16.dp))
+
+        // Theme presets (top — most-used)
+        SectionCard("Theme") {
+            Text("Pick a built-in keyboard theme. Tap any to apply instantly — the keyboard re-themes the next time you bring it up.", color = TextSecondary, fontSize = 12.sp)
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                com.stylekeyboard.app.keyboard.KeyboardTheme.all.forEach { th ->
+                    val selected = cfg.themeId == th.id
+                    Card(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(64.dp)
+                            .clickable { vm.setThemeId(th.id) },
+                        colors = CardDefaults.cardColors(containerColor = Elevated),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Box(
+                            Modifier
+                                .fillMaxSize()
+                                .background(th.background)
+                                .then(
+                                    if (selected) Modifier.border(2.dp, th.accent, RoundedCornerShape(10.dp))
+                                    else Modifier
+                                )
+                                .padding(8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Box(Modifier.size(14.dp).clip(CircleShape).background(th.accent))
+                                Spacer(Modifier.height(4.dp))
+                                Text(th.name, color = th.keyFg, fontSize = 9.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        }
         Spacer(Modifier.height(16.dp))
 
         // GIF background
