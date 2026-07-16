@@ -59,33 +59,42 @@ class KeyboardController {
      * Re-load the active preset + config + shortcuts. Called when the keyboard
      * starts a new input connection or when the user changes the active preset
      * via the toolbar.
+     *
+     * The whole body is wrapped in try/catch so a transient DB or JSON error
+     * never crashes the input path — the keyboard will fall back to defaults
+     * and the user can keep typing.
      */
     fun refresh(context: android.content.Context) {
         if (soundManager == null) soundManager = KeySoundManager(context)
         scope.launch {
-            val configRepo = ServiceLocator.appConfigRepository
-            val config = configRepo.get() ?: return@launch
-            val resolved = ResolvedConfig(
-                gifBackgroundUri = config.gifBackgroundUri,
-                glint = JsonCodec.decodeGlint(config.glintConfigJson),
-                keyShape = config.keyShape,
-                sound = JsonCodec.decodeSound(config.soundConfigJson),
-                hapticsEnabled = config.hapticsEnabled,
-                activePresetId = config.activePresetId,
-                emojiShortcutsEnabled = config.emojiShortcutsEnabled,
-                predictiveTextEnabled = config.predictiveTextEnabled
-            )
-            _config.value = resolved
-            soundManager?.applyConfig(resolved.sound)
+            try {
+                val configRepo = ServiceLocator.appConfigRepository
+                val config = configRepo.get()
+                if (config == null) return@launch
+                val resolved = ResolvedConfig(
+                    gifBackgroundUri = config.gifBackgroundUri,
+                    glint = JsonCodec.decodeGlint(config.glintConfigJson),
+                    keyShape = config.keyShape,
+                    sound = JsonCodec.decodeSound(config.soundConfigJson),
+                    hapticsEnabled = config.hapticsEnabled,
+                    activePresetId = config.activePresetId,
+                    emojiShortcutsEnabled = config.emojiShortcutsEnabled,
+                    predictiveTextEnabled = config.predictiveTextEnabled
+                )
+                _config.value = resolved
+                soundManager?.applyConfig(resolved.sound)
 
-            val preset = ServiceLocator.presetRepository.getById(resolved.activePresetId)
-            _activePreset.value = preset
-            _activeMapping.value = preset?.let { JsonCodec.decodeMap(it.mappingJson) } ?: emptyMap()
+                val preset = ServiceLocator.presetRepository.getById(resolved.activePresetId)
+                _activePreset.value = preset
+                _activeMapping.value = preset?.let { JsonCodec.decodeMap(it.mappingJson) } ?: emptyMap()
 
-            if (resolved.emojiShortcutsEnabled) {
-                _shortcuts.value = ServiceLocator.shortcutRepository.getAll()
-            } else {
-                _shortcuts.value = emptyList()
+                if (resolved.emojiShortcutsEnabled) {
+                    _shortcuts.value = ServiceLocator.shortcutRepository.getAll()
+                } else {
+                    _shortcuts.value = emptyList()
+                }
+            } catch (t: Throwable) {
+                android.util.Log.w("KeyboardController", "refresh failed", t)
             }
         }
     }

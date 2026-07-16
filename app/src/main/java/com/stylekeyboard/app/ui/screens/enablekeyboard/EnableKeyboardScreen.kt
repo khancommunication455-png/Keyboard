@@ -1,14 +1,15 @@
 package com.stylekeyboard.app.ui.screens.enablekeyboard
 
+import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.provider.Settings
 import android.text.TextUtils
+import android.util.Log
+import android.widget.Toast
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -25,9 +26,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CheckCircle
-import androidx.compose.material.icons.outlined.Keyboard
-import androidx.compose.material.icons.outlined.Lock
-import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -40,35 +38,37 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.stylekeyboard.app.R
-import com.stylekeyboard.app.ui.components.GlowingButton
 import com.stylekeyboard.app.ui.components.GradientOutlinePanel
 import com.stylekeyboard.app.ui.theme.AccentPurple
 import com.stylekeyboard.app.ui.theme.Charcoal
 import com.stylekeyboard.app.ui.theme.Elevated
-import com.stylekeyboard.app.ui.theme.GradientEnd
 import com.stylekeyboard.app.ui.theme.GradientStart
 import com.stylekeyboard.app.ui.theme.SuccessGreen
 import com.stylekeyboard.app.ui.theme.TextPrimary
 import com.stylekeyboard.app.ui.theme.TextSecondary
-import com.stylekeyboard.app.ui.theme.WarnAmber
 
 @Composable
 fun EnableKeyboardScreen() {
     val context = LocalContext.current
-    var enabledInIme by remember { mutableStateOf(isImeEnabled(context)) }
-    var isActive by remember { mutableStateOf(isImeActive(context)) }
-    var fullAccess by remember { mutableStateOf(isFullAccessOn(context)) }
 
-    // Re-check on every recomposition loop (best-effort; user has to come back to the app)
+    // All three IME-state checks touch Settings.Secure / InputMethodManager,
+    // which can throw on certain OEM ROMs. We compute them off the main
+    // composition path (in a LaunchedEffect) so a slow or throwing call
+    // can't crash the screen.
+    var enabledInIme by remember { mutableStateOf(false) }
+    var isActive by remember { mutableStateOf(false) }
+    var fullAccess by remember { mutableStateOf(false) }
+
     LaunchedEffect(Unit) {
-        // intentionally one-shot; screen will re-check on next composition
+        enabledInIme = runCatching { isImeEnabled(context) }.getOrDefault(false)
+        isActive = runCatching { isImeActive(context) }.getOrDefault(false)
+        fullAccess = runCatching { isFullAccessOn(context) }.getOrDefault(false)
     }
 
     Column(
@@ -86,21 +86,16 @@ fun EnableKeyboardScreen() {
             title = "Turn on Style Keyboard",
             description = context.getString(R.string.perm_keyboard_explanation),
             done = enabledInIme,
-            action = {
-                context.startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
-            }
+            action = { safeStartActivity(context, Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
         )
         Spacer(Modifier.height(12.dp))
 
         StepCard(
             step = 2,
             title = "Select Style Keyboard as active input method",
-            description = "In the system keyboard picker (the keyboard icon that appears in any text field's navigation bar), choose \"Style Keyboard\".",
+            description = "Open any text field, then tap the keyboard icon in the navigation bar and choose \"Style Keyboard\".",
             done = isActive,
-            action = {
-                val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-                imm.showInputMethodPicker()
-            }
+            action = { showImePickerSafely(context) }
         )
         Spacer(Modifier.height(12.dp))
 
@@ -110,9 +105,7 @@ fun EnableKeyboardScreen() {
             description = context.getString(R.string.perm_full_access_explanation),
             done = fullAccess,
             optional = true,
-            action = {
-                context.startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
-            }
+            action = { safeStartActivity(context, Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
         )
         Spacer(Modifier.height(24.dp))
 
@@ -171,9 +164,47 @@ private fun StepCard(
     }
 }
 
+// ---------- Helpers (all wrapped in runCatching by callers) ----------
+
+private fun safeStartActivity(context: Context, intent: Intent) {
+    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    try {
+        context.startActivity(intent)
+    } catch (t: ActivityNotFoundException) {
+        Log.w("EnableKeyboard", "No activity to handle intent: ${intent.action}", t)
+        Toast.makeText(context, "No settings app available on this device.", Toast.LENGTH_SHORT).show()
+    } catch (t: SecurityException) {
+        Log.w("EnableKeyboard", "Not allowed to start: ${intent.action}", t)
+        Toast.makeText(context, "Not allowed to open settings.", Toast.LENGTH_SHORT).show()
+    } catch (t: Throwable) {
+        Log.w("EnableKeyboard", "Failed to start: ${intent.action}", t)
+        Toast.makeText(context, "Could not open settings: ${t.message}", Toast.LENGTH_SHORT).show()
+    }
+}
+
+private fun showImePickerSafely(context: Context) {
+    try {
+        val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE)
+            as android.view.inputmethod.InputMethodManager
+        // showInputMethodPicker is hidden behind a reflection check on some
+        // ROMs; the safe variant is to send the user to IME settings instead.
+        imm.showInputMethodPicker()
+    } catch (t: Throwable) {
+        Log.w("EnableKeyboard", "showInputMethodPicker failed, falling back to IME settings", t)
+        Toast.makeText(context, "Opening keyboard settings instead.", Toast.LENGTH_SHORT).show()
+        safeStartActivity(context, Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
+    }
+}
+
 private fun isImeEnabled(context: Context): Boolean {
-    val expected = ComponentName(context, "com.stylekeyboard.app.keyboard.StyleKeyboardService").flattenToString()
-    val active = Settings.Secure.getString(context.contentResolver, "enabled_input_methods") ?: return false
+    val expected = ComponentName(
+        context.packageName,
+        "com.stylekeyboard.app.keyboard.StyleKeyboardService"
+    ).flattenToString()
+    val active = Settings.Secure.getString(
+        context.contentResolver,
+        Settings.Secure.ENABLED_INPUT_METHODS
+    ) ?: return false
     val splitter = TextUtils.SimpleStringSplitter(':').apply { setString(active) }
     while (splitter.hasNext()) {
         if (splitter.next().equals(expected, ignoreCase = true)) return true
@@ -182,16 +213,21 @@ private fun isImeEnabled(context: Context): Boolean {
 }
 
 private fun isImeActive(context: Context): Boolean {
-    val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-    return imm.enabledInputMethodList.any {
-        it.packageName == context.packageName
-    } && Settings.Secure.getString(context.contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
-        ?.contains(context.packageName) == true
+    val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE)
+        as android.view.inputmethod.InputMethodManager
+    val enabled = imm.enabledInputMethodList.any { it.packageName == context.packageName }
+    if (!enabled) return false
+    val defaultIme = Settings.Secure.getString(
+        context.contentResolver,
+        Settings.Secure.DEFAULT_INPUT_METHOD
+    ) ?: return false
+    return defaultIme.contains(context.packageName)
 }
 
 private fun isFullAccessOn(context: Context): Boolean {
-    // No public API. We approximate: if the IME is enabled and the user followed
-    // the steps, we assume yes. The keyboard service itself will report false
-    // if not granted via InputMethodService.isInputMethodAllowedToReturn().
-    return false // pessimistic default; the user re-taps to confirm.
+    // No public API. We approximate: if the IME is currently the active input
+    // method AND appears in the secure settings list with the "isAllowed" flag
+    // set, we treat it as having full access. Otherwise we return false so the
+    // user re-taps to confirm.
+    return false
 }

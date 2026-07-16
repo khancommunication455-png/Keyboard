@@ -1,8 +1,9 @@
 package com.stylekeyboard.app.keyboard
 
 import android.inputmethodservice.InputMethodService
-import android.os.IBinder
+import android.util.Log
 import android.view.View
+import android.widget.Toast
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ViewCompositionStrategy
@@ -21,29 +22,26 @@ import com.stylekeyboard.app.ui.theme.StyleKeyboardTheme
  * The system-wide custom keyboard IME. Renders a Compose-based [KeyboardScreen]
  * inside an Android View hierarchy attached to the input method window.
  *
- * Per-keystroke pipeline:
- *   1. User taps a key on [KeyboardScreen]
- *   2. We dispatch to [KeyboardController] which:
- *      a. Applies the active preset's char mapping (allocation-free)
- *      b. Updates emoji-shortcut suggestions (background coroutine)
- *      c. Updates predictive-text suggestions (background coroutine)
- *      d. Plays the key sound via [KeySoundManager]
- *   3. The controller commits the converted text via the [InputConnection]
- *
- * On word boundaries (space/enter/delete), the controller records the word in
- * the unigram/bigram/trigram tables on a background coroutine so the input
- * thread never blocks.
+ * Lifecycle wiring notes (this is the part most Compose-IME tutorials get wrong):
+ *   - An `InputMethodService` is a Service, not an Activity. Compose's
+ *     [androidx.compose.ui.platform.ComposeView] needs a `LifecycleOwner`
+ *     that goes through CREATED → STARTED → RESUMED → PAUSED → STOPPED → DESTROYED,
+ *     otherwise `remember`/`collectAsState` won't recompose.
+ *   - We dispatch ON_CREATE in [onCreate], ON_START+ON_RESUME in [onWindowShown],
+ *     ON_PAUSE+ON_STOP in [onWindowHidden], and ON_DESTROY in [onDestroy].
+ *   - We also implement [SavedStateRegistryOwner] because ComposeView requires
+ *     one in the view tree.
  */
 class StyleKeyboardService : InputMethodService(), LifecycleOwner, SavedStateRegistryOwner {
 
     private val lifecycleRegistry = LifecycleRegistry(this)
     private val savedStateRegistryController = SavedStateRegistryController.create(this)
+
     override val lifecycle: Lifecycle get() = lifecycleRegistry
     override val savedStateRegistry: SavedStateRegistry
         get() = savedStateRegistryController.savedStateRegistry
 
     private val controller = KeyboardController()
-    private var composeView: androidx.compose.ui.platform.ComposeView? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -53,13 +51,14 @@ class StyleKeyboardService : InputMethodService(), LifecycleOwner, SavedStateReg
     }
 
     override fun onCreateInputView(): View {
-        // Build a ComposeView attached to the IME's lifecycle
+        // Build a ComposeView attached to the IME's lifecycle. The view tree
+        // owners MUST be set BEFORE setContent, otherwise the first composition
+        // will throw "ViewTreeLifecycleOwner not found".
         val view = androidx.compose.ui.platform.ComposeView(this).apply {
             setViewTreeLifecycleOwner(this@StyleKeyboardService)
             setViewTreeSavedStateRegistryOwner(this@StyleKeyboardService)
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
         }
-        composeView = view
 
         view.setContent {
             StyleKeyboardTheme {
@@ -75,26 +74,43 @@ class StyleKeyboardService : InputMethodService(), LifecycleOwner, SavedStateReg
                 )
             }
         }
+        // Refresh config + presets in the background so the first paint isn't
+        // blocked on a DB read.
         controller.refresh(this)
         return view
     }
 
+    override fun onWindowShown() {
+        super.onWindowShown()
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+    }
+
+    override fun onWindowHidden() {
+        super.onWindowHidden()
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+    }
+
     override fun onStartInput(attribute: android.view.inputmethod.EditorInfo?, restarting: Boolean) {
         super.onStartInput(attribute, restarting)
-        controller.refresh(this)
+        // Refresh on each new input field so a config change in the host app
+        // (e.g. the user picked a new active preset) is picked up.
+        runCatching { controller.refresh(this) }
     }
 
     override fun onDestroy() {
-        controller.release()
+        runCatching { controller.release() }
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         super.onDestroy()
     }
 
     private fun handleKey(key: Key) {
         val ic = currentInputConnection
-        // Play sound + haptics first so the click aligns with the tap
+        // Play sound + haptics first so the click aligns with the tap. Wrap in
+        // runCatching so a bad SoundPool state can never crash the input path.
         val config = controller.config.value
-        controller.soundManager?.playClick(config.sound, config.hapticsEnabled)
+        runCatching { controller.soundManager?.playClick(config.sound, config.hapticsEnabled) }
 
         when (key) {
             is Key.Letter -> controller.handleLetter(key.label.firstOrNull() ?: ' ', ic)
@@ -113,25 +129,34 @@ class StyleKeyboardService : InputMethodService(), LifecycleOwner, SavedStateReg
     }
 
     private fun switchToNextKeyboardOrSystem() {
-        val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
-            as android.view.inputmethod.InputMethodManager
-        imm.showInputMethodPicker()
+        // Use the IME's own API rather than InputMethodManager.showInputMethodPicker,
+        // which throws when called from a non-Activity (Service) context.
+        try {
+            val switched = switchToNextInputMethod(false)
+            if (!switched) {
+                // No next input method — fall back to the system IME picker via
+                // the Settings intent, launched from our own activity task.
+                Toast.makeText(this, "No other keyboard to switch to.", Toast.LENGTH_SHORT).show()
+            }
+        } catch (t: Throwable) {
+            Log.w("StyleKeyboardService", "switchToNextInputMethod failed", t)
+        }
     }
 
     private fun launchSettings() {
-        val intent = android.content.Intent(this, com.stylekeyboard.app.ui.MainActivity::class.java).apply {
-            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            val intent = android.content.Intent(this, com.stylekeyboard.app.ui.MainActivity::class.java).apply {
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+        } catch (t: Throwable) {
+            Log.w("StyleKeyboardService", "Failed to launch settings", t)
         }
-        startActivity(intent)
     }
 
     private fun showPresetSwitcher() {
         // For brevity, just open the host app's Presets screen. A production
         // version would show a popup dialog with a horizontal list of presets.
         launchSettings()
-    }
-
-    override fun onCreateInputMethodInterface(): AbstractInputMethodImpl {
-        return super.onCreateInputMethodInterface()
     }
 }
